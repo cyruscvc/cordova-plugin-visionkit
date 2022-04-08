@@ -84,12 +84,16 @@
             }
             
             NSLog(@"Adding file to `images` array: %@", filePath);
+            
+            NSString* strBase64 = [self encodeToBase64String:image];
 
-            [images addObject:filePath];
+            NSLog(@"Base64 string: %@", strBase64);
+            
+            [images addObject:strBase64];
         }
         
         NSLog(@"%@", images);
-
+        
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray: images];
         [weakSelf.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
         
@@ -98,6 +102,10 @@
     });
     
     
+}
+
+- (NSString *)encodeToBase64String:(UIImage *)image {
+ return [UIImagePNGRepresentation(image) base64EncodedStringWithOptions:kNilOptions];
 }
 
 - (void)documentCameraViewControllerDidCancel:(VNDocumentCameraViewController *)controller {

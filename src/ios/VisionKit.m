@@ -70,7 +70,6 @@
         loadingView.layer.cornerRadius = 10;
 
         UIActivityIndicatorView* spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
-
         spinner.center = CGPointMake(loadingView.frame.size.width / 2, loadingView.frame.size.height / 2);
         [spinner startAnimating];
 
@@ -85,21 +84,26 @@
 
             NSLog(@"Processing selected image");
 
+            // Resize the image to a smaller size (e.g., 50% of the original size)
+            CGSize newSize = CGSizeMake(image.size.width * 0.5, image.size.height * 0.5);
+            UIGraphicsBeginImageContextWithOptions(newSize, NO, 0.0);
+            [image drawInRect:CGRectMake(0, 0, newSize.width, newSize.height)];
+            UIImage* resizedImage = UIGraphicsGetImageFromCurrentImageContext();
+            UIGraphicsEndImageContext();
+
+            // Compress the resized image with a lower quality
+            NSData* imageData = UIImageJPEGRepresentation(resizedImage, 0.5);
+
             NSString* filePath = [self tempFilePath:@"jpg"];
-            NSLog(@"Got image file path: %@", filePath);
-
-            NSData* imageData = UIImageJPEGRepresentation(image, 0.7);
-
             NSError* err = nil;
 
             if (![imageData writeToFile:filePath options:NSAtomicWrite error:&err]) {
                 pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_IO_EXCEPTION messageAsString:[err localizedDescription]];
-                [weakSelf.commandDelegate sendPluginResult:pluginResult callbackId: self->callbackId];
+                [weakSelf.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
                 return;
             }
 
-            NSString* strBase64 = [self encodeToBase64String:image];
-
+            NSString* strBase64 = [self encodeToBase64String:resizedImage];
             [images addObject:strBase64];
 
             NSLog(@"%@", images);

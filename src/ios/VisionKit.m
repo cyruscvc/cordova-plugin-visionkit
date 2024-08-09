@@ -41,7 +41,8 @@
 
 - (void)performOCRWithImage:(UIImage *)image {
     NSData *imageData = UIImageJPEGRepresentation(image, 0.5);  // Adjust compression as needed
-    
+    NSString *base64Image = [imageData base64EncodedStringWithOptions:0]; // Convert to Base64 string
+
     // Use the stored endpoint and apiKey
     NSString *endpoint = [NSString stringWithFormat:@"%@/formrecognizer/documentModels/prebuilt-receipt:analyze?api-version=2023-07-31", self.azureEndpoint];
     NSString *apiKey = self.azureApiKey;
@@ -109,7 +110,10 @@
             }
         }
         
-        // Return the extracted receipt information
+        // Add the Base64 image string to the response
+        receiptInfo[@"base64Image"] = base64Image;
+        
+        // Return the extracted receipt information along with the Base64 image
         CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:receiptInfo];
         [self.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
     }];

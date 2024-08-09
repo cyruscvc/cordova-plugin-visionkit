@@ -1,3 +1,4 @@
+#import <Foundation/Foundation.h>
 #import "VisionKit.h"
 
 #define RL_SCAN_PREFIX @"rl_scan_"
@@ -7,9 +8,94 @@
 @synthesize documentCameraViewController;
 
 - (void)scan:(CDVInvokedUrlCommand*)command {
+    // Retrieve the endpoint and apiKey from the command arguments
+    NSString *endpoint = [[command arguments] objectAtIndex:0];
+    NSString *apiKey = [[command arguments] objectAtIndex:1];
+    
+    // Save them to instance variables for later use
+    self.azureEndpoint = endpoint;
+    self.azureApiKey = apiKey;
+    
     callbackId = command.callbackId;
     
-    // Adding option to choose between scanning and selecting from gallery
+    [self showScanOrGalleryOptions];
+}
+
+- (void)documentCameraViewController:(VNDocumentCameraViewController *)controller didFinishWithScan:(VNDocumentCameraScan *)scan {
+    [self showLoadingSpinnerInView:self.documentCameraViewController.view];
+    
+    __weak VisionKit* weakSelf = self;
+    dispatch_time_t delay = dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC * 0.5);
+    dispatch_after(delay, dispatch_get_main_queue(), ^{
+        UIImage *image = [scan imageOfPageAtIndex:0];
+        [weakSelf processImage:image];
+
+        // Proceed with OCR after image processing
+        [weakSelf performOCRWithImage:image];
+        
+        [controller dismissViewControllerAnimated:YES completion:nil];
+    });
+}
+
+#pragma mark - Azure OCR Integration
+
+- (void)performOCRWithImage:(UIImage *)image {
+    NSData *imageData = UIImageJPEGRepresentation(image, 0.7);  // Adjust compression as needed
+    
+    // Use the stored endpoint and apiKey
+    NSString *endpoint = [NSString stringWithFormat:@"%@/formrecognizer/documentModels/prebuilt-read:analyze?api-version=2023-07-31", self.azureEndpoint];
+    NSString *apiKey = self.azureApiKey;
+    
+    // Create request
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:endpoint]];
+    [request setHTTPMethod:@"POST"];
+    [request setValue:@"application/octet-stream" forHTTPHeaderField:@"Content-Type"];
+    [request setValue:apiKey forHTTPHeaderField:@"Ocp-Apim-Subscription-Key"];
+    [request setHTTPBody:imageData];
+    
+    // Perform the request (asynchronous)
+    NSURLSession *session = [NSURLSession sharedSession];
+    NSURLSessionDataTask *dataTask = [session dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        if (error) {
+            NSLog(@"Error: %@", error.localizedDescription);
+            CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:error.localizedDescription];
+            [self.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
+            return;
+        }
+        
+        NSError *jsonError = nil;
+        NSDictionary *responseDict = [NSJSONSerialization JSONObjectWithData:data options:kNilOptions error:&jsonError];
+        
+        if (jsonError) {
+            NSLog(@"JSON Parsing Error: %@", jsonError.localizedDescription);
+            CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:jsonError.localizedDescription];
+            [self.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
+            return;
+        }
+        
+        NSLog(@"OCR Response: %@", responseDict);
+        
+        // Extract relevant information from OCR response
+        NSMutableArray *ocrResults = [NSMutableArray array];
+        NSArray *pages = responseDict[@"analyzeResult"][@"pages"];
+        for (NSDictionary *page in pages) {
+            NSArray *lines = page[@"lines"];
+            for (NSDictionary *line in lines) {
+                [ocrResults addObject:line[@"content"]];
+            }
+        }
+        
+        // Return the OCR results
+        CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray:ocrResults];
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
+    }];
+    
+    [dataTask resume];
+}
+
+#pragma mark - UI Methods
+
+- (void)showScanOrGalleryOptions {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Select Option"
                                                                    message:nil
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
@@ -32,17 +118,14 @@
 }
 
 - (void)showScanUI {
-    // Perform UI operations on the main thread
     dispatch_async(dispatch_get_main_queue(), ^{
         self.documentCameraViewController = [VNDocumentCameraViewController new];
         self.documentCameraViewController.delegate = self;
-        
         [self.viewController presentViewController:self.documentCameraViewController animated:YES completion:nil];
     });
 }
 
 - (void)showGallery {
-    // Perform UI operations on the main thread
     dispatch_async(dispatch_get_main_queue(), ^{
         UIImagePickerController *imagePicker = [[UIImagePickerController alloc] init];
         imagePicker.delegate = self;
@@ -52,68 +135,89 @@
     });
 }
 
-- (void)imagePickerController:(UIImagePickerController *)picker didFinishPickingMediaWithInfo:(NSDictionary<NSString *,id> *)info {
-    UIImage *selectedImage = info[UIImagePickerControllerOriginalImage];
-    [self processImage:selectedImage];
-    [picker dismissViewControllerAnimated:YES completion:nil];
+- (void)showLoadingSpinnerInView:(UIView *)view {
+    UIView* loadingView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 80, 80)];
+    loadingView.center = view.center;
+    loadingView.backgroundColor = [UIColor whiteColor];
+    loadingView.clipsToBounds = YES;
+    loadingView.layer.cornerRadius = 10;
+
+    UIActivityIndicatorView* spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
+    spinner.center = CGPointMake(loadingView.frame.size.width / 2, loadingView.frame.size.height / 2);
+    [spinner startAnimating];
+    
+    [loadingView addSubview:spinner];
+    [view addSubview:loadingView];
 }
+
+- (void)hideLoadingSpinnerInView:(UIView *)view {
+    for (UIView *subview in view.subviews) {
+        if ([subview isKindOfClass:[UIActivityIndicatorView class]]) {
+            [subview removeFromSuperview];
+        }
+    }
+}
+
+#pragma mark - Image Processing
 
 - (void)processImage:(UIImage *)image {
     __weak VisionKit* weakSelf = self;
     dispatch_async(dispatch_get_main_queue(), ^{
-        // Present a loading spinner
-        UIView* loadingView = [[UIView alloc] init];
-        loadingView.frame = CGRectMake(0, 0, 80, 80);
-        loadingView.center = self.viewController.view.center;
-        loadingView.backgroundColor = [UIColor whiteColor];
-        loadingView.clipsToBounds = true;
-        loadingView.layer.cornerRadius = 10;
+        [self showLoadingSpinnerInView:self.viewController.view];
 
-        UIActivityIndicatorView* spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
-        spinner.center = CGPointMake(loadingView.frame.size.width / 2, loadingView.frame.size.height / 2);
-        [spinner startAnimating];
-
-        // Add the views to the UI
-        [loadingView addSubview:spinner];
-        [self.viewController.view addSubview:loadingView];
-
-        dispatch_time_t delay = dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC * 0.5);
-        dispatch_after(delay, dispatch_get_main_queue(), ^{
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
             NSMutableArray* images = [@[] mutableCopy];
             CDVPluginResult* pluginResult = nil;
+            
+            @try {
+                // Resize and compress the image
+                UIImage *resizedImage = [self resizeImage:image toPercentage:0.5];
+                NSData* imageData = UIImageJPEGRepresentation(resizedImage, 0.5);
+                
+                NSString* filePath = [self tempFilePath:@"jpg"];
+                NSError* err = nil;
 
-            NSLog(@"Processing selected image");
+                if (![imageData writeToFile:filePath options:NSAtomicWrite error:&err]) {
+                    @throw [NSException exceptionWithName:@"FileWriteException" reason:[err localizedDescription] userInfo:nil];
+                }
 
-            // Resize the image to a smaller size (e.g., 50% of the original size)
-            CGSize newSize = CGSizeMake(image.size.width * 0.5, image.size.height * 0.5);
-            UIGraphicsBeginImageContextWithOptions(newSize, NO, 0.0);
-            [image drawInRect:CGRectMake(0, 0, newSize.width, newSize.height)];
-            UIImage* resizedImage = UIGraphicsGetImageFromCurrentImageContext();
-            UIGraphicsEndImageContext();
-
-            // Compress the resized image with a lower quality
-            NSData* imageData = UIImageJPEGRepresentation(resizedImage, 0.5);
-
-            NSString* filePath = [self tempFilePath:@"jpg"];
-            NSError* err = nil;
-
-            if (![imageData writeToFile:filePath options:NSAtomicWrite error:&err]) {
-                pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_IO_EXCEPTION messageAsString:[err localizedDescription]];
-                [weakSelf.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
-                return;
+                NSString* strBase64 = [self encodeToBase64String:resizedImage];
+                [images addObject:strBase64];
+                
+                pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray:images];
             }
-
-            NSString* strBase64 = [self encodeToBase64String:resizedImage];
-            [images addObject:strBase64];
-
-            NSLog(@"%@", images);
-
-            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray: images];
-            [weakSelf.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
-
-            [loadingView removeFromSuperview];
+            @catch (NSException *exception) {
+                pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:exception.reason];
+            }
+            @finally {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [weakSelf.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
+                    [weakSelf hideLoadingSpinnerInView:weakSelf.viewController.view];
+                });
+            }
         });
     });
+}
+
+- (UIImage *)resizeImage:(UIImage *)image toPercentage:(CGFloat)percentage {
+    CGSize newSize = CGSizeMake(image.size.width * percentage, image.size.height * percentage);
+    UIGraphicsBeginImageContextWithOptions(newSize, NO, 0.0);
+    [image drawInRect:CGRectMake(0, 0, newSize.width, newSize.height)];
+    UIImage *resizedImage = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return resizedImage;
+}
+
+- (NSString *)encodeToBase64String:(UIImage *)image {
+    return [UIImagePNGRepresentation(image) base64EncodedStringWithOptions:kNilOptions];
+}
+
+#pragma mark - UIImagePickerControllerDelegate
+
+- (void)imagePickerController:(UIImagePickerController *)picker didFinishPickingMediaWithInfo:(NSDictionary<NSString *,id> *)info {
+    UIImage *selectedImage = info[UIImagePickerControllerOriginalImage];
+    [self processImage:selectedImage];
+    [picker dismissViewControllerAnimated:YES completion:nil];
 }
 
 - (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker {
@@ -122,72 +226,18 @@
     [self.commandDelegate sendPluginResult:pluginResult callbackId:callbackId];
 }
 
+#pragma mark - VNDocumentCameraViewControllerDelegate
+
 - (void)documentCameraViewController:(VNDocumentCameraViewController *)controller didFinishWithScan:(VNDocumentCameraScan *)scan {
-    // Present a loading spinner
-    UIView* loadingView = [[UIView alloc] init];
-    loadingView.frame = CGRectMake(0, 0, 80, 80);
-    loadingView.center = self.documentCameraViewController.view.center;
-    loadingView.backgroundColor = [UIColor whiteColor];
-    loadingView.clipsToBounds = true;
-    loadingView.layer.cornerRadius = 10;
-    
-    UIActivityIndicatorView* spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
-    
-    spinner.center = CGPointMake(loadingView.frame.size.width / 2, loadingView.frame.size.height / 2);
-    [spinner startAnimating];
-    
-    // Add the views to the UI
-    [loadingView addSubview:spinner];
-    [[self.documentCameraViewController view] addSubview:loadingView];
-    
-    [[self.documentCameraViewController view] setNeedsDisplay];
+    [self showLoadingSpinnerInView:self.documentCameraViewController.view];
     
     __weak VisionKit* weakSelf = self;
-    
     dispatch_time_t delay = dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC * 0.5);
-    dispatch_after(delay, dispatch_get_main_queue(), ^(void){
-        NSMutableArray* images = [@[] mutableCopy];
-        CDVPluginResult* pluginResult = nil;
-
-        // Process only the first scanned page
-        NSLog(@"Processing scanned image 0");
-        
-        NSString* filePath = [self tempFilePath:@"jpg"];
-        NSLog(@"Got image file path image 0, %@", filePath);
-        
-        UIImage* image = [scan imageOfPageAtIndex: 0];
-        NSData* imageData = UIImageJPEGRepresentation(image, 0.7);
-        
-        NSLog(@"Got image data image 0");
-
-        NSError* err = nil;
-
-        if (![imageData writeToFile:filePath options:NSAtomicWrite error:&err]) {
-            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_IO_EXCEPTION messageAsString:[err localizedDescription]];
-            [weakSelf.commandDelegate sendPluginResult:pluginResult callbackId: self->callbackId];
-            return;
-        }
-        
-        NSLog(@"Adding file to `images` array: %@", filePath);
-        
-        NSString* strBase64 = [self encodeToBase64String:image];
-
-        NSLog(@"Base64 string: %@", strBase64);
-        
-        [images addObject:strBase64];
-        
-        NSLog(@"%@", images);
-        
-        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray: images];
-        [weakSelf.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
-        
+    dispatch_after(delay, dispatch_get_main_queue(), ^{
+        UIImage *image = [scan imageOfPageAtIndex:0];
+        [weakSelf processImage:image];
         [controller dismissViewControllerAnimated:YES completion:nil];
-        NSLog(@"Dismiss scanner");
     });
-}
-
-- (NSString *)encodeToBase64String:(UIImage *)image {
- return [UIImagePNGRepresentation(image) base64EncodedStringWithOptions:kNilOptions];
 }
 
 - (void)documentCameraViewControllerDidCancel:(VNDocumentCameraViewController *)controller {
@@ -202,20 +252,15 @@
     [self.commandDelegate sendPluginResult:pluginResult callbackId:callbackId];
 }
 
-// Borrowed from https://github.com/apache/cordova-plugin-camera/blob/master/src/ios/CDVCamera.m#L396
+#pragma mark - Utility
+
 - (NSString*)tempFilePath:(NSString*)extension {
-    NSString* docsPath = [NSTemporaryDirectory()stringByStandardizingPath];
+    NSString* docsPath = [NSTemporaryDirectory() stringByStandardizingPath];
     NSFileManager* fileMgr = [[NSFileManager alloc] init]; // recommended by Apple (vs [NSFileManager defaultManager]) to be threadsafe
     NSString* filePath;
 
-    // unique file name
-    NSTimeInterval timeStamp;
-    NSNumber *timeStampObj;
-    
     do {
-        timeStamp = [[NSDate date] timeIntervalSince1970];
-        timeStampObj = [NSNumber numberWithDouble: timeStamp];
-        filePath = [NSString stringWithFormat:@"%@/%@%ld.%@", docsPath, RL_SCAN_PREFIX, [timeStampObj longValue], extension];
+        filePath = [NSString stringWithFormat:@"%@/%@%ld.%@", docsPath, RL_SCAN_PREFIX, (long)[NSDate timeIntervalSinceReferenceDate], extension];
     } while ([fileMgr fileExistsAtPath:filePath]);
 
     return filePath;

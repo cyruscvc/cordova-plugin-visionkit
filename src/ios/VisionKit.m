@@ -92,7 +92,7 @@
             UIGraphicsEndImageContext();
 
             // Compress the resized image with a lower quality
-            NSData* imageData = UIImageJPEGRepresentation(resizedImage, 0.5);
+            NSData* imageData = UIImageJPEGRepresentation(resizedImage, 0.4);
 
             NSString* filePath = [self tempFilePath:@"jpg"];
             NSError* err = nil;
@@ -123,66 +123,59 @@
 }
 
 - (void)documentCameraViewController:(VNDocumentCameraViewController *)controller didFinishWithScan:(VNDocumentCameraScan *)scan {
-    // Present a loading spinner
-    UIView* loadingView = [[UIView alloc] init];
-    loadingView.frame = CGRectMake(0, 0, 80, 80);
-    loadingView.center = self.documentCameraViewController.view.center;
-    loadingView.backgroundColor = [UIColor whiteColor];
-    loadingView.clipsToBounds = true;
-    loadingView.layer.cornerRadius = 10;
-    
-    UIActivityIndicatorView* spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
-    
-    spinner.center = CGPointMake(loadingView.frame.size.width / 2, loadingView.frame.size.height / 2);
-    [spinner startAnimating];
-    
-    // Add the views to the UI
-    [loadingView addSubview:spinner];
-    [[self.documentCameraViewController view] addSubview:loadingView];
-    
-    [[self.documentCameraViewController view] setNeedsDisplay];
-    
-    __weak VisionKit* weakSelf = self;
-    
-    dispatch_time_t delay = dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC * 0.5);
-    dispatch_after(delay, dispatch_get_main_queue(), ^(void){
-        NSMutableArray* images = [@[] mutableCopy];
-        CDVPluginResult* pluginResult = nil;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIView* loadingView = [[UIView alloc] init];
+        loadingView.frame = CGRectMake(0, 0, 80, 80);
+        loadingView.center = self.documentCameraViewController.view.center;
+        loadingView.backgroundColor = [UIColor whiteColor];
+        loadingView.clipsToBounds = true;
+        loadingView.layer.cornerRadius = 10;
+
+        UIActivityIndicatorView* spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
+        spinner.center = CGPointMake(loadingView.frame.size.width / 2, loadingView.frame.size.height / 2);
+        [spinner startAnimating];
+
+        [loadingView addSubview:spinner];
+        [[self.documentCameraViewController view] addSubview:loadingView];
+        [[self.documentCameraViewController view] setNeedsDisplay];
+
+        __weak VisionKit* weakSelf = self;
 
         // Process only the first scanned page
         NSLog(@"Processing scanned image 0");
-        
+
         NSString* filePath = [self tempFilePath:@"jpg"];
         NSLog(@"Got image file path image 0, %@", filePath);
-        
+
         UIImage* image = [scan imageOfPageAtIndex: 0];
-        NSData* imageData = UIImageJPEGRepresentation(image, 0.7);
-        
+        NSData* imageData = UIImageJPEGRepresentation(image, 0.5);
+
         NSLog(@"Got image data image 0");
 
         NSError* err = nil;
 
         if (![imageData writeToFile:filePath options:NSAtomicWrite error:&err]) {
-            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_IO_EXCEPTION messageAsString:[err localizedDescription]];
-            [weakSelf.commandDelegate sendPluginResult:pluginResult callbackId: self->callbackId];
+            CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_IO_EXCEPTION messageAsString:[err localizedDescription]];
+            [weakSelf.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
             return;
         }
-        
+
         NSLog(@"Adding file to `images` array: %@", filePath);
-        
+
         NSString* strBase64 = [self encodeToBase64String:image];
 
         NSLog(@"Base64 string: %@", strBase64);
-        
+
+        NSMutableArray* images = [@[] mutableCopy];
         [images addObject:strBase64];
-        
-        NSLog(@"%@", images);
-        
-        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray: images];
+
+        CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray: images];
         [weakSelf.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
-        
-        [controller dismissViewControllerAnimated:YES completion:nil];
-        NSLog(@"Dismiss scanner");
+
+        [controller dismissViewControllerAnimated:YES completion:^{
+            NSLog(@"Dismiss scanner completed");
+            [loadingView removeFromSuperview];
+        }];
     });
 }
 

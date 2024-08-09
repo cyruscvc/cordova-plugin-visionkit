@@ -40,10 +40,10 @@
 #pragma mark - Azure OCR Integration
 
 - (void)performOCRWithImage:(UIImage *)image {
-    NSData *imageData = UIImageJPEGRepresentation(image, 0.7);  // Adjust compression as needed
+    NSData *imageData = UIImageJPEGRepresentation(image, 0.5);  // Adjust compression as needed
     
     // Use the stored endpoint and apiKey
-    NSString *endpoint = [NSString stringWithFormat:@"%@/formrecognizer/documentModels/prebuilt-read:analyze?api-version=2023-07-31", self.azureEndpoint];
+    NSString *endpoint = [NSString stringWithFormat:@"%@/formrecognizer/documentModels/prebuilt-receipt:analyze?api-version=2023-07-31", self.azureEndpoint];
     NSString *apiKey = self.azureApiKey;
     
     // Create request
@@ -76,17 +76,41 @@
         NSLog(@"OCR Response: %@", responseDict);
         
         // Extract relevant information from OCR response
-        NSMutableArray *ocrResults = [NSMutableArray array];
-        NSArray *pages = responseDict[@"analyzeResult"][@"pages"];
-        for (NSDictionary *page in pages) {
-            NSArray *lines = page[@"lines"];
-            for (NSDictionary *line in lines) {
-                [ocrResults addObject:line[@"content"]];
+        NSDictionary *analyzeResult = responseDict[@"analyzeResult"];
+        NSArray *documents = analyzeResult[@"documents"];
+        
+        NSMutableDictionary *receiptInfo = [NSMutableDictionary dictionary];
+        
+        if (documents.count > 0) {
+            NSDictionary *fields = documents[0][@"fields"];
+            
+            // Extract Date
+            NSDictionary *dateField = fields[@"TransactionDate"];
+            if (dateField) {
+                receiptInfo[@"date"] = dateField[@"content"];
+            }
+            
+            // Extract Total Amount
+            NSDictionary *totalField = fields[@"Total"];
+            if (totalField) {
+                receiptInfo[@"totalAmount"] = totalField[@"content"];
+            }
+            
+            // Extract Merchant Name
+            NSDictionary *merchantNameField = fields[@"MerchantName"];
+            if (merchantNameField) {
+                receiptInfo[@"merchantName"] = merchantNameField[@"content"];
+            }
+            
+            // Extract Currency Code (if available)
+            NSDictionary *currencyField = fields[@"Currency"];
+            if (currencyField) {
+                receiptInfo[@"currencyCode"] = currencyField[@"content"];
             }
         }
         
-        // Return the OCR results
-        CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray:ocrResults];
+        // Return the extracted receipt information
+        CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:receiptInfo];
         [self.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
     }];
     

@@ -5,6 +5,8 @@
     NSString* callbackId;
 }
 
+@property (nonatomic, strong) NSString *azureEndpoint;
+@property (nonatomic, strong) NSString *azureApiKey;
 @property (strong) VNDocumentCameraViewController* documentCameraViewController;
 
 - (void) scan:(CDVInvokedUrlCommand*)command;

@@ -124,57 +124,40 @@
 
 - (void)documentCameraViewController:(VNDocumentCameraViewController *)controller didFinishWithScan:(VNDocumentCameraScan *)scan {
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIView* loadingView = [[UIView alloc] init];
-        loadingView.frame = CGRectMake(0, 0, 80, 80);
-        loadingView.center = self.documentCameraViewController.view.center;
-        loadingView.backgroundColor = [UIColor whiteColor];
-        loadingView.clipsToBounds = true;
-        loadingView.layer.cornerRadius = 10;
-
-        UIActivityIndicatorView* spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
-        spinner.center = CGPointMake(loadingView.frame.size.width / 2, loadingView.frame.size.height / 2);
-        [spinner startAnimating];
-
-        [loadingView addSubview:spinner];
-        [[self.documentCameraViewController view] addSubview:loadingView];
-        [[self.documentCameraViewController view] setNeedsDisplay];
-
-        __weak VisionKit* weakSelf = self;
+        // Initialize an array to hold the processed image
+        NSMutableArray* images = [@[] mutableCopy];
+        CDVPluginResult* pluginResult = nil;
 
         // Process only the first scanned page
         NSLog(@"Processing scanned image 0");
+        UIImage* image = [scan imageOfPageAtIndex:0];
 
+        // Convert the image to a JPEG representation
+        NSData* imageData = UIImageJPEGRepresentation(image, 0.5);
         NSString* filePath = [self tempFilePath:@"jpg"];
         NSLog(@"Got image file path image 0, %@", filePath);
 
-        UIImage* image = [scan imageOfPageAtIndex: 0];
-        NSData* imageData = UIImageJPEGRepresentation(image, 0.5);
-
-        NSLog(@"Got image data image 0");
-
         NSError* err = nil;
-
         if (![imageData writeToFile:filePath options:NSAtomicWrite error:&err]) {
-            CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_IO_EXCEPTION messageAsString:[err localizedDescription]];
-            [weakSelf.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
+            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_IO_EXCEPTION messageAsString:[err localizedDescription]];
+            [self.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
             return;
         }
 
         NSLog(@"Adding file to `images` array: %@", filePath);
 
+        // Convert the image to a Base64 string
         NSString* strBase64 = [self encodeToBase64String:image];
-
         NSLog(@"Base64 string: %@", strBase64);
 
-        NSMutableArray* images = [@[] mutableCopy];
         [images addObject:strBase64];
 
-        CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray: images];
-        [weakSelf.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
+        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray:images];
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
 
+        // Dismiss the scanner immediately after processing the first scan
         [controller dismissViewControllerAnimated:YES completion:^{
-            NSLog(@"Dismiss scanner completed");
-            [loadingView removeFromSuperview];
+            NSLog(@"Scanner dismissed after first scan");
         }];
     });
 }

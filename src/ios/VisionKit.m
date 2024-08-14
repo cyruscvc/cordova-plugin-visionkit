@@ -8,26 +8,34 @@
 
 - (void)scan:(CDVInvokedUrlCommand*)command {
     callbackId = command.callbackId;
-    
+
     // Adding option to choose between scanning and selecting from gallery
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Select Option"
                                                                    message:nil
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
-    
+
     UIAlertAction *scanAction = [UIAlertAction actionWithTitle:@"Scan Document" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
         [self showScanUI];
     }];
-    
+
     UIAlertAction *galleryAction = [UIAlertAction actionWithTitle:@"Select from Gallery" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
         [self showGallery];
     }];
-    
+
     UIAlertAction *cancelAction = [UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil];
-    
+
     [alert addAction:scanAction];
     [alert addAction:galleryAction];
     [alert addAction:cancelAction];
-    
+
+    // For iPad, present the UIAlertController as a popover
+    if (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad) {
+        UIPopoverPresentationController *popoverController = alert.popoverPresentationController;
+        popoverController.sourceView = self.viewController.view;
+        popoverController.sourceRect = CGRectMake(self.viewController.view.bounds.size.width / 2.0, self.viewController.view.bounds.size.height / 4.0, 1.0, 1.0);
+        popoverController.permittedArrowDirections = UIPopoverArrowDirectionAny;
+    }
+
     [self.viewController presentViewController:alert animated:YES completion:nil];
 }
 

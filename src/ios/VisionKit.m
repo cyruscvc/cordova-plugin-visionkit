@@ -108,6 +108,7 @@
             if (![imageData writeToFile:filePath options:NSAtomicWrite error:&err]) {
                 pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_IO_EXCEPTION messageAsString:[err localizedDescription]];
                 [weakSelf.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
+                [loadingView removeFromSuperview];
                 return;
             }
 
@@ -132,38 +133,34 @@
 
 - (void)documentCameraViewController:(VNDocumentCameraViewController *)controller didFinishWithScan:(VNDocumentCameraScan *)scan {
     dispatch_async(dispatch_get_main_queue(), ^{
-        // Initialize an array to hold the processed image
         NSMutableArray* images = [@[] mutableCopy];
         CDVPluginResult* pluginResult = nil;
 
-        // Process only the first scanned page
-        NSLog(@"Processing scanned image 0");
-        UIImage* image = [scan imageOfPageAtIndex:0];
+        // Process only the first image
+        if (scan.pageCount > 0) {
+            NSLog(@"Processing scanned image 0");
+            UIImage* image = [scan imageOfPageAtIndex:0];
 
-        // Convert the image to a JPEG representation
-        NSData* imageData = UIImageJPEGRepresentation(image, 0.5);
-        NSString* filePath = [self tempFilePath:@"jpg"];
-        NSLog(@"Got image file path image 0, %@", filePath);
+            NSData* imageData = UIImageJPEGRepresentation(image, 0.5);
+            NSString* filePath = [self tempFilePath:@"jpg"];
+            NSLog(@"Got image file path image 0, %@", filePath);
 
-        NSError* err = nil;
-        if (![imageData writeToFile:filePath options:NSAtomicWrite error:&err]) {
-            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_IO_EXCEPTION messageAsString:[err localizedDescription]];
-            [self.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
-            return;
+            NSError* err = nil;
+            if (![imageData writeToFile:filePath options:NSAtomicWrite error:&err]) {
+                pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_IO_EXCEPTION messageAsString:[err localizedDescription]];
+                [self.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
+                [controller dismissViewControllerAnimated:YES completion:nil];
+                return;
+            }
+
+            NSString* strBase64 = [self encodeToBase64String:image];
+            NSLog(@"Base64 string for page 0");
+            [images addObject:strBase64];
         }
-
-        NSLog(@"Adding file to `images` array: %@", filePath);
-
-        // Convert the image to a Base64 string
-        NSString* strBase64 = [self encodeToBase64String:image];
-        NSLog(@"Base64 string: %@", strBase64);
-
-        [images addObject:strBase64];
 
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray:images];
         [self.commandDelegate sendPluginResult:pluginResult callbackId:self->callbackId];
 
-        // Dismiss the scanner immediately after processing the first scan
         [controller dismissViewControllerAnimated:YES completion:^{
             NSLog(@"Scanner dismissed after first scan");
         }];
